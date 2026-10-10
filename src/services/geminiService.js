@@ -87,39 +87,59 @@ If the image is completely unreadable, blurry, or not a medicine package, return
       ? base64Image.split(",")[1]
       : base64Image;
 
-    const candidateModels = ["gemini-3.8-flash"];
+    // Models in priority order: gemini-3.8-flash, with 2.0-flash and 1.5-flash as fallbacks
+    const candidateModels = ["gemini-3.8-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
     let response = null;
     let lastErr = null;
 
     for (const modelName of candidateModels) {
-      try {
-        response = await ai.models.generateContent({
-          model: modelName,
-          contents: [
-            {
-              role: "user",
-              parts: [
-                { text: prompt },
-                {
-                  inlineData: {
-                    data: cleanBase64,
-                    mimeType: mimeType || "image/jpeg",
+      let attempts = 0;
+      const maxAttempts = 2;
+
+      while (attempts < maxAttempts) {
+        attempts++;
+        try {
+          response = await ai.models.generateContent({
+            model: modelName,
+            contents: [
+              {
+                role: "user",
+                parts: [
+                  { text: prompt },
+                  {
+                    inlineData: {
+                      data: cleanBase64,
+                      mimeType: mimeType || "image/jpeg",
+                    },
                   },
-                },
-              ],
-            },
-          ],
-        });
-        if (response) break;
-      } catch (err) {
-        lastErr = err;
-        console.warn(`Model ${modelName} error:`, err);
-        throw err;
+                ],
+              },
+            ],
+          });
+          if (response) break;
+        } catch (err) {
+          lastErr = err;
+          const status = err.status || (err.error && err.error.code);
+          const errMsg = (err.message || "").toLowerCase();
+
+          // 503 High Demand / UNAVAILABLE: brief pause & retry once, else fallback to next model
+          if (status === 503 || errMsg.includes("high demand") || errMsg.includes("unavailable")) {
+            console.warn(`Model ${modelName} experiencing high demand (503). Retrying or falling back...`);
+            if (attempts < maxAttempts) {
+              await new Promise((resolve) => setTimeout(resolve, 1500));
+              continue;
+            }
+          }
+          // If model not found or still failing, move to next model in list
+          break;
+        }
       }
+
+      if (response) break;
     }
 
     if (!response) {
-      throw lastErr || new Error("Failed to generate content with available Gemini models");
+      throw lastErr || new Error("All Gemini models are currently experiencing high demand. Please retry in a few moments.");
     }
 
     const responseText = response.text ? response.text.trim() : "";
