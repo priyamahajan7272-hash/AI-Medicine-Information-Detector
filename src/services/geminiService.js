@@ -87,7 +87,7 @@ If the image is completely unreadable, blurry, or not a medicine package, return
       ? base64Image.split(",")[1]
       : base64Image;
 
-    const candidateModels = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash"];
+    const candidateModels = ["gemini-3.8-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
     let response = null;
     let lastErr = null;
 
