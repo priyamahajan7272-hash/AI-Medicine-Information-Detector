@@ -1,20 +1,44 @@
 import { GoogleGenAI } from "@google/genai";
 
 /**
+ * Checks if an error from Gemini API represents an expired, invalid, or exhausted API key.
+ */
+export function isApiKeyExpiredOrInvalid(error) {
+  if (!error) return false;
+  const msg = (error.message || "").toLowerCase();
+  const status = error.status || error.statusCode || "";
+
+  return (
+    status === 400 ||
+    status === 401 ||
+    status === 403 ||
+    status === 429 ||
+    msg.includes("api_key_invalid") ||
+    msg.includes("api key not valid") ||
+    msg.includes("api key expired") ||
+    msg.includes("permission_denied") ||
+    msg.includes("resource_exhausted") ||
+    msg.includes("quota exceeded") ||
+    msg.includes("rate limit") ||
+    msg.includes("unauthenticated")
+  );
+}
+
+/**
  * Analyzes medicine packaging image using Google Gemini Vision API.
  * Strict student project scope: Information/reading tool only.
  * No medical advice or prescription recommendations.
  */
 export async function analyzeMedicineImage(base64Image, mimeType = "image/jpeg", customApiKey = "") {
-  const apiKey = customApiKey || import.meta.env.VITE_GEMINI_API_KEY;
+  const apiKey = (customApiKey || import.meta.env.VITE_GEMINI_API_KEY || "").trim();
 
-  if (!apiKey || apiKey.trim() === "" || apiKey === "your_gemini_api_key_here") {
-    throw new Error(
-      "Missing Google Gemini API key! Please add your key to the .env file (VITE_GEMINI_API_KEY) or enter it in the settings bar."
-    );
+  if (!apiKey || apiKey === "your_gemini_api_key_here") {
+    const err = new Error("NO_API_KEY");
+    err.isKeyIssue = true;
+    throw err;
   }
 
-  const ai = new GoogleGenAI({ apiKey: apiKey.trim() });
+  const ai = new GoogleGenAI({ apiKey });
 
   const prompt = `
 You are an optical reading and text extraction assistant for an educational student project ("AI Medicine Information Detector").
@@ -92,6 +116,9 @@ If the image is completely unreadable, blurry, or not a medicine package, return
     const parsed = JSON.parse(cleanedJsonStr);
     return parsed;
   } catch (error) {
+    if (isApiKeyExpiredOrInvalid(error)) {
+      error.isKeyIssue = true;
+    }
     console.error("Gemini Vision analysis error:", error);
     throw error;
   }

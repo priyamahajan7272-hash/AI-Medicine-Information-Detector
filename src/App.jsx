@@ -11,15 +11,23 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
-  const [apiKey, setApiKey] = useState(
-    localStorage.getItem("medicine_detector_gemini_key") || ""
+  
+  // User custom key from localStorage (only required if server/default key expires or fails)
+  const [userApiKey, setUserApiKey] = useState(
+    localStorage.getItem("medicine_detector_user_gemini_key") || ""
   );
-  const [isKeySaved, setIsKeySaved] = useState(false);
+  const [showKeyModal, setShowKeyModal] = useState(false);
+  const [keyPromptReason, setKeyPromptReason] = useState("");
+  const [tempKeyInput, setTempKeyInput] = useState("");
+
   const [history, setHistory] = useState([]);
 
-  // Check env key or saved key
-  const envKey = import.meta.env.VITE_GEMINI_API_KEY || "";
-  const effectiveKey = apiKey || envKey;
+  // Check if a default server key is available in environment
+  const serverKeyAvailable = Boolean(
+    import.meta.env.VITE_GEMINI_API_KEY &&
+    import.meta.env.VITE_GEMINI_API_KEY.trim() !== "" &&
+    import.meta.env.VITE_GEMINI_API_KEY !== "your_gemini_api_key_here"
+  );
 
   // Load history from localStorage
   useEffect(() => {
@@ -31,20 +39,39 @@ export default function App() {
     }
   }, []);
 
-  const handleSaveKey = () => {
-    localStorage.setItem("medicine_detector_gemini_key", apiKey.trim());
-    setIsKeySaved(true);
-    setTimeout(() => setIsKeySaved(false), 2000);
+  const handleSaveUserKey = () => {
+    if (!tempKeyInput.trim()) return;
+    localStorage.setItem("medicine_detector_user_gemini_key", tempKeyInput.trim());
+    setUserApiKey(tempKeyInput.trim());
+    setShowKeyModal(false);
+    setError("");
+  };
+
+  const handleClearUserKey = () => {
+    localStorage.removeItem("medicine_detector_user_gemini_key");
+    setUserApiKey("");
+    setTempKeyInput("");
   };
 
   const processImage = async (dataUrl) => {
     setError("");
     setLoading(true);
+
+    // Active key: User override if provided, otherwise default server key
+    const activeKey = userApiKey || import.meta.env.VITE_GEMINI_API_KEY || "";
+
+    if (!activeKey) {
+      setKeyPromptReason("No API key configured on the server. Please provide a free Gemini API key to continue.");
+      setShowKeyModal(true);
+      setLoading(false);
+      return;
+    }
+
     try {
-      const data = await analyzeMedicineImage(dataUrl, "image/jpeg", apiKey || envKey);
+      const data = await analyzeMedicineImage(dataUrl, "image/jpeg", activeKey);
       setResult(data);
 
-      // Save to recent scans history (without large image for privacy/storage limits)
+      // Save to recent scans history
       const newEntry = {
         id: Date.now(),
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
@@ -56,11 +83,20 @@ export default function App() {
       setHistory(updatedHistory);
       localStorage.setItem("medicine_scan_history", JSON.stringify(updatedHistory));
     } catch (err) {
-      console.error(err);
-      setError(
-        err.message ||
-          "Failed to process medicine image. Please ensure your Gemini API key is valid and the image is clear."
-      );
+      console.error("Scan error:", err);
+
+      // If the server key or active key expired/quota exceeded/invalid
+      if (err.isKeyIssue || err.message === "NO_API_KEY") {
+        setKeyPromptReason(
+          "The current API key has expired, reached its quota limit, or is invalid. Please enter your free Google Gemini API key to proceed."
+        );
+        setShowKeyModal(true);
+      } else {
+        setError(
+          err.message ||
+            "Failed to process medicine image. Please ensure the package is well-lit and clearly visible."
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -81,34 +117,39 @@ export default function App() {
         </p>
       </header>
 
-      {/* API Key Configuration Bar */}
-      <div className="api-bar">
-        <div className="api-status">
-          <span className={`status-dot ${effectiveKey ? "active" : ""}`} />
+      {/* User Key Active Notice (Only shows if user has custom key active) */}
+      {userApiKey && (
+        <div
+          style={{
+            background: "#f0fdf4",
+            border: "1px solid #bbf7d0",
+            borderRadius: "10px",
+            padding: "10px 16px",
+            marginBottom: "20px",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            fontSize: "0.85rem",
+            color: "#166534",
+          }}
+        >
           <span>
-            {effectiveKey ? (
-              <strong>Gemini Vision API: Ready</strong>
-            ) : (
-              <span style={{ color: "#d97706" }}>Gemini API Key Required</span>
-            )}
+            🔑 <strong>Custom Gemini API Key active:</strong> ••••••••{userApiKey.slice(-4)}
           </span>
-        </div>
-
-        <div className="api-input-wrap">
-          <input
-            type="password"
-            className="api-input"
-            placeholder={
-              envKey ? "Using key from .env file (or enter override here)" : "Paste Google Gemini API Key here"
-            }
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-          />
-          <button className="btn-secondary" onClick={handleSaveKey}>
-            {isKeySaved ? "Saved! ✓" : "Save Key"}
+          <button
+            onClick={handleClearUserKey}
+            style={{
+              background: "transparent",
+              color: "#dc2626",
+              fontSize: "0.8rem",
+              textDecoration: "underline",
+              fontWeight: 600,
+            }}
+          >
+            Reset to Server Key
           </button>
         </div>
-      </div>
+      )}
 
       {/* Main Analysis Grid */}
       <div className="main-grid">
@@ -241,6 +282,96 @@ export default function App() {
 
       {/* Safety & Project Disclaimer */}
       <Disclaimer />
+
+      {/* Modal Prompt: Only shown when Server Key expires/exhausts/fails */}
+      {showKeyModal && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: "rgba(15, 23, 42, 0.75)",
+            backdropFilter: "blur(4px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+            padding: "16px",
+          }}
+        >
+          <div
+            style={{
+              background: "#ffffff",
+              borderRadius: "16px",
+              padding: "28px",
+              maxWidth: "500px",
+              width: "100%",
+              boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.2)",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}>
+              <span style={{ fontSize: "1.8rem" }}>⚠️</span>
+              <h3 style={{ fontSize: "1.3rem", fontWeight: 700, color: "#1e293b" }}>
+                API Key Expired or Required
+              </h3>
+            </div>
+
+            <p style={{ fontSize: "0.9rem", color: "#475569", lineHeight: 1.5, marginBottom: "16px" }}>
+              {keyPromptReason || "The server's Gemini API key has expired or reached its free tier limit. Enter a free Google Gemini key to continue scanning."}
+            </p>
+
+            <div style={{ marginBottom: "16px" }}>
+              <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 700, color: "#334155", marginBottom: "6px" }}>
+                Google Gemini API Key
+              </label>
+              <input
+                type="password"
+                placeholder="Paste AIzaSy... key here"
+                value={tempKeyInput}
+                onChange={(e) => setTempKeyInput(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "10px 14px",
+                  borderRadius: "8px",
+                  border: "1px solid #cbd5e1",
+                  fontSize: "0.9rem",
+                  boxSizing: "border-box",
+                }}
+              />
+              <span style={{ fontSize: "0.75rem", color: "#64748b", marginTop: "4px", display: "block" }}>
+                You can get a free key instantly at{" "}
+                <a
+                  href="https://aistudio.google.com/"
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ color: "#2563eb", textDecoration: "underline" }}
+                >
+                  aistudio.google.com
+                </a>
+              </span>
+            </div>
+
+            <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+              <button
+                className="btn-secondary"
+                onClick={() => setShowKeyModal(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn-primary"
+                style={{ flex: "none", padding: "10px 20px" }}
+                disabled={!tempKeyInput.trim()}
+                onClick={handleSaveUserKey}
+              >
+                Use My Key & Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
