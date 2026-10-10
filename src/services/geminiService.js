@@ -87,23 +87,45 @@ If the image is completely unreadable, blurry, or not a medicine package, return
       ? base64Image.split(",")[1]
       : base64Image;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: [
-        {
-          role: "user",
-          parts: [
-            { text: prompt },
+    const candidateModels = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash"];
+    let response = null;
+    let lastErr = null;
+
+    for (const modelName of candidateModels) {
+      try {
+        response = await ai.models.generateContent({
+          model: modelName,
+          contents: [
             {
-              inlineData: {
-                data: cleanBase64,
-                mimeType: mimeType || "image/jpeg",
-              },
+              role: "user",
+              parts: [
+                { text: prompt },
+                {
+                  inlineData: {
+                    data: cleanBase64,
+                    mimeType: mimeType || "image/jpeg",
+                  },
+                },
+              ],
             },
           ],
-        },
-      ],
-    });
+        });
+        if (response) break;
+      } catch (err) {
+        lastErr = err;
+        const errMsg = (err.message || "").toLowerCase();
+        // If 404 model not found, try next model
+        if (err.status === 404 || errMsg.includes("not found") || errMsg.includes("unavailable")) {
+          console.warn(`Model ${modelName} not available, trying next model...`);
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    if (!response) {
+      throw lastErr || new Error("Failed to generate content with available Gemini models");
+    }
 
     const responseText = response.text ? response.text.trim() : "";
 
