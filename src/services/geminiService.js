@@ -87,7 +87,7 @@ If the image is completely unreadable, blurry, or not a medicine package, return
       ? base64Image.split(",")[1]
       : base64Image;
 
-    const candidateModels = ["gemini-3.8-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+    const candidateModels = ["gemini-3.8-flash"];
     let response = null;
     let lastErr = null;
 
@@ -113,12 +113,7 @@ If the image is completely unreadable, blurry, or not a medicine package, return
         if (response) break;
       } catch (err) {
         lastErr = err;
-        const errMsg = (err.message || "").toLowerCase();
-        // If 404 model not found, try next model
-        if (err.status === 404 || errMsg.includes("not found") || errMsg.includes("unavailable")) {
-          console.warn(`Model ${modelName} not available, trying next model...`);
-          continue;
-        }
+        console.warn(`Model ${modelName} error:`, err);
         throw err;
       }
     }
